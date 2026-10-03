@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.10" }
+          - { os: ubuntu-latest, python: "3.13" }
+          - { os: windows-latest, python: "3.12" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install "faster-whisper>=1.2,<2" numpy "anthropic>=1.11,<2" pytest ruff
+      - run: ruff check .
+      - run: python -m pytest -q
+
+  windows-install:
+    name: Install, transcribe and uninstall on Windows
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the Python download the installer falls back to
+        shell: powershell
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          $r = Invoke-WebRequest -UseBasicParsing -Method Head -Uri "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+          Write-Host "$($r.StatusCode) python-3.12.10-amd64.exe"
+
+      - name: Check that the default branch download works
+        continue-on-error: true  # fails until the default branch has the app
+        shell: powershell
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/${{ github.repository }}/HEAD/install.ps1" -OutFile "$env:RUNNER_TEMP\install-head.ps1"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/${{ github.repository }}/archive/HEAD.zip" -OutFile "$env:RUNNER_TEMP\head.zip"
+
+      - name: Install from GitHub with install.ps1
+        shell: powershell
+        run: |
+          $name = "Jos" + [char]0xE9 + " CI"
+          ./install.ps1 -Ref "${{ github.event.pull_request.head.sha || github.sha }}" -Name $name -Summarizer none -WhisperModel base -NonInteractive -NoStart
+
+      - name: Check the installation
+        shell: powershell
+        run: |
+          function Assert([bool]$Condition, [string]$Message) {
+            if (-not $Condition) { throw "FAILED: $Message" }
+            Write-Host "ok: $Message"
+          }
+          $app = Join-Path $env:LOCALAPPDATA "MeetingTranscripter"
+          Assert (Test-Path "$app\venv\Scripts\meeting-transcripter.exe") "app launcher"
+          Assert (Test-Path "$app\app.ico") "icon"
+          Assert (Test-Path "$app\uninstall.ps1") "uninstaller"
+          $config = [IO.File]::ReadAllText("$app\config.json") | ConvertFrom-Json
+          Assert ($config.me_label -eq ("Jos" + [char]0xE9 + " CI")) "non-ASCII name saved intact"
+          Assert ($config.model -eq "base") "speech model setting"
+          Assert ($config.summarizer -eq "none") "summarizer setting"
+          Assert ($config.claude_model -eq "claude-opus-5-5") "config.json lists every default"
+          Assert (Test-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "Meeting Transcripter.lnk")) "Start menu shortcut"
+          $reg = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MeetingTranscripter"
+          Assert ($reg.DisplayVersion -match "^\d+\.\d+") "Apps and features entry ($($reg.DisplayVersion))"
+          $service = New-Object -ComObject Schedule.Service
+          $service.Connect()
+          $hasTask = $true
+          try { $service.GetFolder("\").GetTask("Meeting Transcripter") | Out-Null } catch { $hasTask = $false }
+          $hasStartup = Test-Path (Join-Path ([Environment]::GetFolderPath("Startup")) "Meeting Transcripter.lnk")
+          Assert ($hasTask -or $hasStartup) "starts at sign-in (task: $hasTask, Startup folder: $hasStartup)"
+
+      - name: Transcribe synthetic speech end to end
+        shell: powershell
+        run: ./scripts/e2e-test.ps1
+
+      - name: Update in place keeps the settings
+        shell: powershell
+        run: |
+          ./install.ps1 -Source . -NonInteractive -NoStart
+          $config = [IO.File]::ReadAllText("$env:LOCALAPPDATA\MeetingTranscripter\config.json") | ConvertFrom-Json
+          if ($config.me_label -ne ("Jos" + [char]0xE9 + " CI") -or $config.model -ne "base") { throw "FAILED: settings changed on update" }
+          Write-Host "ok: settings kept"
+
+      - name: Uninstall
+        shell: powershell
+        run: |
+          function Assert([bool]$Condition, [string]$Message) {
+            if (-not $Condition) { throw "FAILED: $Message" }
+            Write-Host "ok: $Message"
+          }
+          $app = Join-Path $env:LOCALAPPDATA "MeetingTranscripter"
+          & "$app\uninstall.ps1" -Quiet -RemoveSpeechModel
+          Assert (-not (Test-Path $app)) "app folder removed"
+          Assert (-not (Test-Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\MeetingTranscripter")) "Apps and features entry removed"
+          Assert (-not (Test-Path (Join-Path ([Environment]::GetFolderPath("Programs")) "Meeting Transcripter.lnk"))) "Start menu shortcut removed"
+          $service = New-Object -ComObject Schedule.Service
+          $service.Connect()
+          $hasTask = $true
+          try { $service.GetFolder("\").GetTask("Meeting Transcripter") | Out-Null } catch { $hasTask = $false }
+          Assert (-not $hasTask) "sign-in task removed"
+          Assert (Test-Path "$env:USERPROFILE\Meetings") "meetings folder kept"

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meeting-transcripter"
+description = "Records Teams, Zoom and Google Meet calls on Windows, transcribes them locally and writes meeting notes."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dynamic = ["version"]
+dependencies = [
+    "faster-whisper>=1.2,<2",
+    "numpy",
+    "psutil",
+    "pystray>=0.19",
+    "Pillow",
+    "anthropic>=1.11,<2",
+    "PyAudioWPatch>=0.2.12; sys_platform == 'win32'",
+    "pycaw>=20240210; sys_platform == 'win32'",
+    "comtypes; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# NVIDIA GPU transcription: CUDA 12 cuBLAS and cuDNN 9 for ctranslate2.
+cuda = [
+    "nvidia-cublas-cu12; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32'",
+]
+dev = ["pytest", "ruff"]
+
+[project.gui-scripts]
+meeting-transcripter = "meeting_transcripter.recorder:main"
+
+[project.urls]
+Homepage = "https://github.com/masoudelete/Meeting-transcripter"
+
+[tool.setuptools]
+packages = ["meeting_transcripter"]
+
+[tool.setuptools.dynamic]
+version = { attr = "meeting_transcripter.__version__" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E731", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
