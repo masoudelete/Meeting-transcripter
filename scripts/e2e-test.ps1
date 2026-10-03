@@ -25,7 +25,7 @@ print('single instance:', recorder.single_instance())
 "@
 if ($LASTEXITCODE -ne 0) { throw "FAILED: detection smoke test" }
 $out | Write-Host
-Assert ($out -match "single instance: True") "single-instance mutex"
+Assert ((@($out) -join "`n") -match "single instance: True") "single-instance mutex"
 
 Write-Host "--- Transcription"
 $meetings = Join-Path $env:RUNNER_TEMP "e2e-meetings"

@@ -11,6 +11,8 @@ requires-python = ">=3.10"
 dynamic = ["version"]
 dependencies = [
     "faster-whisper>=1.2,<2",
+    # faster-whisper 1.2.1 decodes audio with av.open(metadata_errors=...), which av 19 removed.
+    "av>=11,<19",
     "numpy",
     "psutil",
     "pystray>=0.19",
